@@ -323,8 +323,9 @@ with tab1:
                         # Buttons inside the auto-pushed bottom area
                         if note['file'] and note['file'] != "#":
                             f_name = note.get('file_name') or "File"
-                            label = f"⬇️ Download {f_name}"
-                            st.link_button(label, note['file'], use_container_width=True)
+                            # Append ?download= to force browser download instead of opening in tab
+                            download_url = f"{note['file']}?download="
+                            st.link_button(f"⬇️ Download {f_name}", download_url, use_container_width=True)
                         
                         has_liked = note['id'] in st.session_state.user_likes
                         btn_text = f"❤️ {note['likes']} Like" if not has_liked else f"💖 {note['likes']} Liked"
