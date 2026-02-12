@@ -452,9 +452,15 @@ if st.session_state.user is None:
         # We need to construct the absolute redirect URL for Supabase
         # Since we don't know the exact deployed URL dynamicallly easily without config,
         # we will rely on what is set in Supabase dashboard (Redirect URLs).
-        # We pass `redirect_to` to match the deployed URL.
-        # Ensure this URL is added to Supabase > Authentication > URL Configuration > Redirect URLs
-        redirect_url = "https://sstudy.streamlit.app/" 
+        # Environment selection for Redirect URL
+        # Because we can't easily detect if running locally or on cloud in all contexts,
+        # we let the use choose, defaulting to Production if they are not sure.
+        env_mode = st.radio("Login Environment", ["Production (sstudy.streamlit.app)", "Local (localhost:8501)"], horizontal=True, label_visibility="collapsed")
+        
+        if "Production" in env_mode:
+            redirect_url = "https://sstudy.streamlit.app/"
+        else:
+            redirect_url = "http://localhost:8501"
         
         auth_response = supabase.auth.sign_in_with_oauth({
             "provider": "google",
@@ -463,7 +469,7 @@ if st.session_state.user is None:
             }
         })
         if auth_response.url:
-             st.link_button("🔵 Sign in with Google", auth_response.url, use_container_width=True)
+             st.link_button(f"🔵 Sign in with Google ({'Prod' if 'Production' in env_mode else 'Local'})", auth_response.url, use_container_width=True)
     except Exception as e:
         st.error(f"Could not load Google Sign-In: {e}")
 
