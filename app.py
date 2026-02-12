@@ -14,6 +14,12 @@ def format_size(bytes):
     s = round(bytes / p, 2)
     return f"{s} {size_name[i]}"
 
+def calculate_level(xp):
+    return math.floor(math.sqrt(xp / 50))
+
+def calculate_next_level_xp(level):
+    return 50 * ((level + 1) ** 2)
+
 st.set_page_config(page_title="SST Study Sphere", page_icon="🏫", layout="wide")
 
 # --- Supabase Setup ---
@@ -424,7 +430,13 @@ else:
     with st.container():
         c1, c2, c3 = st.columns([3, 1, 0.5])
         c1.markdown('<div class="main-header">🏫 SST Study Sphere</div>', unsafe_allow_html=True)
-        c2.markdown(f"<div style='font-size: 120%;'>Welcome, {st.session_state.user['username']} | XP: {st.session_state.user['xp']}</div>", unsafe_allow_html=True)
+        
+        # Calculate Level
+        xp = st.session_state.user['xp']
+        level = calculate_level(xp)
+        next_level_xp = calculate_next_level_xp(level)
+        
+        c2.markdown(f"<div style='font-size: 120%;'>Welcome, {st.session_state.user['username']} | <b>Level {level}</b> ({xp}/{next_level_xp} XP)</div>", unsafe_allow_html=True)
         if c3.button("Logout"):
             st.session_state.user = None
             st.session_state.user_likes = []
@@ -513,10 +525,15 @@ else:
             icon = "🥇" if rank==1 else "🥈" if rank==2 else "🥉" if rank==3 else f"#{rank}"
             
             with st.container(border=True):
-                c1, c2, c3 = st.columns([1, 4, 1])
+                c1, c2, c3, c4 = st.columns([1, 4, 1.5, 1.5])
                 c1.markdown(f'<div class="leaderboard-rank">{icon}</div>', unsafe_allow_html=True)
                 c2.markdown(f'<div class="leaderboard-row"><b>{user_row["username"]}</b></div>', unsafe_allow_html=True)
-                c3.markdown(f'<div class="leaderboard-row"><b>{user_row["xp"]} XP</b></div>', unsafe_allow_html=True)
+                
+                u_xp = user_row["xp"]
+                u_lvl = calculate_level(u_xp)
+                
+                c3.markdown(f'<div class="leaderboard-row">Lvl {u_lvl}</div>', unsafe_allow_html=True)
+                c4.markdown(f'<div class="leaderboard-row">{u_xp} XP</div>', unsafe_allow_html=True)
 
     # --- AI Tutor Tab ---
     with tab3:
