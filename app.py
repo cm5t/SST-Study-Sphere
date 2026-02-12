@@ -125,6 +125,37 @@ class DataManager:
             return False, "Invalid email or password."
         except Exception as e:
             return False, str(e)
+
+    def sync_google_user(self, email):
+        """Ensures a Google-authenticated user exists in public.users table."""
+        try:
+            # Check if exists
+            res = supabase.table("users").select("*").eq("email", email).execute()
+            if res.data:
+                return res.data[0]
+            
+            # Create new user
+            username = email.split("@")[0]
+            # Ensure unique username (append random digits if needed? keeping simple for now)
+            # Check if username exists, if so, append random
+            check = supabase.table("users").select("username").eq("username", username).execute()
+            if check.data:
+                import random
+                username = f"{username}{random.randint(100, 999)}"
+            
+            new_user = {
+                "email": email,
+                "username": username,
+                "password": "GOOGLE_AUTH_USER", # Placeholder
+                "xp": 0
+            }
+            res = supabase.table("users").insert(new_user).execute()
+            if res.data:
+                return res.data[0]
+            return None
+        except Exception as e:
+            print(f"Sync User Error: {e}")
+            return None
             
     def refresh_user(self):
         """Re-fetches the current user's data (XP, etc) from the DB."""
@@ -376,10 +407,66 @@ st.markdown("""
 if 'user' not in st.session_state:
     st.session_state.user = None
 
+
+# --- OAuth Callback Handling ---
+# Check for 'code' in query params (Supabase generic generic redirect)
+params = st.query_params
+if "code" in params:
+    try:
+        # Exchange code for session
+        session = supabase.auth.exchange_code_for_session(params["code"])
+        if session and session.user and session.user.email:
+            # Sync with public.users
+            app_user = data.sync_google_user(session.user.email)
+            if app_user:
+                st.session_state.user = app_user
+                st.session_state.user_likes = data.get_user_likes()
+                st.success(f"Signed in as {app_user['username']} via Google!")
+                # Clear params and reload
+                st.query_params.clear()
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("Failed to sync user profile.")
+    except Exception as e:
+        st.error(f"Google Sign-In Error: {e}")
+    finally:
+        # Always try to clear params to prevent loops or stale codes
+        if "code" in st.query_params:
+             st.query_params.clear()
+
 if st.session_state.user is None:
     st.markdown('<div class="main-header" style="text-align: center;">🏫 SST Study Sphere</div>', unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center;'>Please Sign In to Continue</h3>", unsafe_allow_html=True)
     
+    # Google Sign-In Button
+    try:
+        # Get the OAuth URL
+        # We redirect back to the app root. 
+        # Streamlit cloud: https://<app>.streamlit.app
+        # Localhost: http://localhost:8501
+        # We can try referencing st.secrets or just let Supabase handle the site_url if configured.
+        # But best to be explicit if running locally vs cloud.
+        # For now, we'll assume the Supabase "Site URL" or "Redirect URL" is set to this app.
+        
+        # We need to construct the absolute redirect URL for Supabase
+        # Since we don't know the exact deployed URL dynamicallly easily without config,
+        # we will rely on what is set in Supabase dashboard (Redirect URLs).
+        # We pass `redirect_to` to match the deployed URL.
+        # Ensure this URL is added to Supabase > Authentication > URL Configuration > Redirect URLs
+        redirect_url = "https://sstudy.streamlit.app/" 
+        
+        auth_response = supabase.auth.sign_in_with_oauth({
+            "provider": "google",
+            "options": {
+                "redirect_to": redirect_url
+            }
+        })
+        if auth_response.url:
+             st.link_button("🔵 Sign in with Google", auth_response.url, use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not load Google Sign-In: {e}")
+
     tab_login, tab_signup = st.tabs(["Sign In", "Sign Up"])
     
     with tab_login:
