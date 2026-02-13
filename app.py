@@ -1,5 +1,5 @@
 import streamlit as st
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 import mimetypes
 import math
 import hashlib
@@ -30,6 +30,18 @@ def calculate_next_level_xp(level):
 st.set_page_config(page_title="SST Study Sphere", page_icon="🏫", layout="wide")
 
 # ----------------------------------------------------------------------
+# Custom Storage for Streamlit (persists PKCE verifier across redirects)
+# ----------------------------------------------------------------------
+class StreamlitSessionStorage:
+    def get_item(self, key: str) -> str:
+        return st.session_state.get(f"sb_{key}")
+    def set_item(self, key: str, value: str) -> None:
+        st.session_state[f"sb_{key}"] = value
+    def remove_item(self, key: str) -> None:
+        if f"sb_{key}" in st.session_state:
+            del st.session_state[f"sb_{key}"]
+
+# ----------------------------------------------------------------------
 # Supabase client – stored in session_state to survive OAuth redirect
 # ----------------------------------------------------------------------
 def get_supabase():
@@ -38,7 +50,8 @@ def get_supabase():
         try:
             st.session_state.supabase_client = create_client(
                 st.secrets["supabase"]["url"],
-                st.secrets["supabase"]["key"]
+                st.secrets["supabase"]["key"],
+                options=ClientOptions(storage=StreamlitSessionStorage())
             )
         except Exception as e:
             st.error(f"Failed to connect to Supabase: {e}")
