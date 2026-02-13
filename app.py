@@ -29,15 +29,20 @@ def calculate_next_level_xp(level):
 st.set_page_config(page_title="SST Study Sphere", page_icon="🏫", layout="wide")
 
 # ----------------------------------------------------------------------
-# Supabase client – cached to preserve PKCE verifier
+# Supabase client – stored in session_state to survive OAuth redirect
 # ----------------------------------------------------------------------
-@st.cache_resource
 def get_supabase():
-    try:
-        return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
-    except Exception as e:
-        st.error(f"Failed to connect to Supabase: {e}")
-        st.stop()
+    """Return Supabase client, stored in session_state to preserve PKCE verifier."""
+    if 'supabase_client' not in st.session_state:
+        try:
+            st.session_state.supabase_client = create_client(
+                st.secrets["supabase"]["url"],
+                st.secrets["supabase"]["key"]
+            )
+        except Exception as e:
+            st.error(f"Failed to connect to Supabase: {e}")
+            st.stop()
+    return st.session_state.supabase_client
 
 supabase = get_supabase()
 
