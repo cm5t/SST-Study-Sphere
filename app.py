@@ -415,7 +415,7 @@ params = st.query_params
 if "code" in params:
     try:
         # Exchange the OAuth code for a session
-        session = supabase.auth.exchange_code_for_session(params["code"])
+        session = supabase.auth.exchange_code_for_session({"auth_code": params["code"]})
         if session and session.user and session.user.email:
             app_user = data.sync_google_user(session.user.email)
             if app_user:
