@@ -5,6 +5,9 @@ import math
 import hashlib
 import time
 
+# ----------------------------------------------------------------------
+# Helper functions (unchanged)
+# ----------------------------------------------------------------------
 def format_size(bytes):
     if bytes == 0:
         return "0B"
@@ -20,9 +23,14 @@ def calculate_level(xp):
 def calculate_next_level_xp(level):
     return 50 * ((level + 1) ** 2)
 
+# ----------------------------------------------------------------------
+# Page config
+# ----------------------------------------------------------------------
 st.set_page_config(page_title="SST Study Sphere", page_icon="🏫", layout="wide")
 
-# --- Supabase Setup ---
+# ----------------------------------------------------------------------
+# Supabase client – cached to preserve PKCE verifier
+# ----------------------------------------------------------------------
 @st.cache_resource
 def get_supabase():
     try:
@@ -33,6 +41,9 @@ def get_supabase():
 
 supabase = get_supabase()
 
+# ----------------------------------------------------------------------
+# Storage bucket setup
+# ----------------------------------------------------------------------
 @st.cache_resource
 def get_or_create_bucket():
     bucket_name = "file"
@@ -41,45 +52,45 @@ def get_or_create_bucket():
         bucket_names = [b.name for b in buckets]
         if bucket_name not in bucket_names:
             supabase.storage.create_bucket(bucket_name, options={"public": True})
-            return bucket_name
         return bucket_name
     except:
         return bucket_name
 
 BUCKET_NAME = get_or_create_bucket()
 
-@st.cache_data(ttl=1) # Reduced TTL to ensure freshness or we can clear it manually
+# ----------------------------------------------------------------------
+# Cached data fetchers
+# ----------------------------------------------------------------------
+@st.cache_data(ttl=1)
 def fetch_projects(query, subject, level, sort_by):
     db_query = supabase.table("projects").select("*")
-    
-    # Sorting
     if sort_by == "Most Likes":
         db_query = db_query.order("likes", desc=True)
-    else: # Recent
+    else:  # Recent
         db_query = db_query.order("created_at", desc=True)
 
     if subject != 'All':
         db_query = db_query.eq("subject", subject)
     if level != 'All':
-        db_query = db_query.cs("level", [level]) 
+        db_query = db_query.cs("level", [level])
     if query:
         db_query = db_query.ilike("title", f"%{query}%")
     return db_query.execute().data
 
 @st.cache_data(ttl=10)
 def fetch_leaderboard():
-    # Fetch directly from users table now
     response = supabase.table("users").select("username, xp").order("xp", desc=True).limit(50).execute()
     return response.data
 
+# ----------------------------------------------------------------------
+# DataManager class (with improvements – no OAuth changes needed inside)
+# ----------------------------------------------------------------------
 class DataManager:
     def __init__(self):
         self.bucket_name = BUCKET_NAME
-        
-        # Initialize session state for user-specific likes if not present
         if 'user_likes' not in st.session_state:
             if 'user' in st.session_state and st.session_state.user:
-                 st.session_state.user_likes = self.get_user_likes()
+                st.session_state.user_likes = self.get_user_likes()
             else:
                 st.session_state.user_likes = []
         self.user_likes = st.session_state.user_likes
@@ -89,18 +100,17 @@ class DataManager:
 
     def signup(self, email, username, password):
         try:
-            # Check if user exists (username OR email)
             if not (3 <= len(username) <= 36):
                 return False, "Username must be between 3 and 36 characters."
 
             existing_user = supabase.table("users").select("*").eq("username", username).execute()
             if existing_user.data:
                 return False, "Username already taken."
-            
+
             existing_email = supabase.table("users").select("*").eq("email", email).execute()
             if existing_email.data:
                 return False, "Email already registered."
-            
+
             hashed_pw = self.hash_password(password)
             user_data = {
                 "email": email,
@@ -118,7 +128,6 @@ class DataManager:
     def login(self, email, password):
         try:
             hashed_pw = self.hash_password(password)
-            # Login with EMAIL now
             response = supabase.table("users").select("*").eq("email", email).eq("password", hashed_pw).execute()
             if response.data:
                 return True, response.data[0]
@@ -129,24 +138,20 @@ class DataManager:
     def sync_google_user(self, email):
         """Ensures a Google-authenticated user exists in public.users table."""
         try:
-            # Check if exists
             res = supabase.table("users").select("*").eq("email", email).execute()
             if res.data:
                 return res.data[0]
-            
-            # Create new user
+
             username = email.split("@")[0]
-            # Ensure unique username (append random digits if needed? keeping simple for now)
-            # Check if username exists, if so, append random
             check = supabase.table("users").select("username").eq("username", username).execute()
             if check.data:
                 import random
                 username = f"{username}{random.randint(100, 999)}"
-            
+
             new_user = {
                 "email": email,
                 "username": username,
-                "password": "GOOGLE_AUTH_USER", # Placeholder
+                "password": "GOOGLE_AUTH_USER",
                 "xp": 0
             }
             res = supabase.table("users").insert(new_user).execute()
@@ -154,20 +159,16 @@ class DataManager:
                 return res.data[0]
             return None
         except Exception as e:
-            print(f"Sync User Error: {e}")
+            print(f"Sync Google User Error: {e}")
             return None
-            
+
     def refresh_user(self):
-        """Re-fetches the current user's data (XP, etc) from the DB."""
         if 'user' in st.session_state and st.session_state.user:
             try:
                 username = st.session_state.user['username']
-                # Fetch fresh data
                 response = supabase.table("users").select("*").eq("username", username).execute()
                 if response.data:
                     st.session_state.user = response.data[0]
-                    # Also refresh likes just in case
-                    # st.session_state.user_likes = self.get_user_likes() 
             except Exception as e:
                 print(f"Error refreshing user: {e}")
 
@@ -182,48 +183,38 @@ class DataManager:
             print(f"Error fetching user likes: {e}")
             return []
 
-
     def add_note(self, title, subject, level, description, uploaded_file):
         if 'user' not in st.session_state or not st.session_state.user:
-             return False
+            return False
 
         current_username = st.session_state.user['username']
         file_url = "#"
         file_name = None
         file_size = 0
-        
+
         if uploaded_file:
-            # Metadata
             file_name = uploaded_file.name
             file_size = uploaded_file.size
-            
-            # Clean filename for storage path
             safe_filename = file_name.replace(" ", "_").replace("(", "").replace(")", "")
             file_path = f"{current_username}/{safe_filename}"
-            
-            # 1. Upload file to Storage
+
             try:
                 file_bytes = uploaded_file.getvalue()
                 content_type = uploaded_file.type or mimetypes.guess_type(file_name)[0]
-                
-                # Check if exists (optional, simply overwriting here for demo simplicity)
                 supabase.storage.from_(self.bucket_name).upload(
-                    path=file_path, 
+                    path=file_path,
                     file=file_bytes,
                     file_options={"content-type": content_type, "upsert": "true"}
                 )
-                
-                # 2. Get Public URL
                 file_url = supabase.storage.from_(self.bucket_name).get_public_url(file_path)
             except Exception as e:
                 st.error(f"File upload failed: {e}")
                 return False
 
-        # 3. Database Insert
         new_note = {
             "title": title,
             "subject": subject,
-            "level": [level], # Store as array
+            "level": [level],
             "author": current_username,
             "description": description,
             "file": file_url,
@@ -231,22 +222,18 @@ class DataManager:
             "file_size": file_size,
             "likes": 0
         }
-        
+
         try:
             supabase.table("projects").insert(new_note).execute()
-            
-            # 4. Award XP (+15)
-            # Read -> Write pattern
             author_data = supabase.table("users").select("xp").eq("username", current_username).execute()
             if author_data.data:
                 current_xp = author_data.data[0]['xp']
                 new_xp = current_xp + 15
                 supabase.table("users").update({"xp": new_xp}).eq("username", current_username).execute()
-            
-            # 5. Refresh everything
+
             fetch_projects.clear()
             fetch_leaderboard.clear()
-            self.refresh_user() # Updates local session XP immediately
+            self.refresh_user()
             return True
         except Exception as e:
             st.error(f"Database insert failed: {e}")
@@ -259,40 +246,31 @@ class DataManager:
 
         if note_id in st.session_state.user_likes:
             return False
-            
+
         try:
             current_username = st.session_state.user['username']
-            # 1. Record the like
             supabase.table("project_likes").insert({
                 "project_id": note_id,
                 "username": current_username
             }).execute()
-            
-            # 2. Increment the counter
             supabase.table("projects").update({"likes": current_likes + 1}).eq("id", note_id).execute()
 
-            # 3. Give XP to the Author (+10)
             author_data = supabase.table("users").select("xp").eq("username", note_author).execute()
             if author_data.data:
                 current_xp = author_data.data[0]['xp']
                 new_xp = current_xp + 10
                 supabase.table("users").update({"xp": new_xp}).eq("username", note_author).execute()
-            
-            # 4. Update local state immediately
+
             st.session_state.user_likes.append(note_id)
-            # Invalidate caches to show new data
             fetch_projects.clear()
             fetch_leaderboard.clear()
-            
-            # Refresh user if they liked their own note (if that was possible, but logic usually prevents self-XP or self-like if desired, but here we just refresh to be safe)
             if current_username == note_author:
-                 self.refresh_user()
-            
+                self.refresh_user()
             return True
         except Exception as e:
             st.error(f"Like failed: {e}")
             return False
-            
+
     def get_projects(self, query="", subject='All', level='All', sort_by="Recent"):
         try:
             return fetch_projects(query, subject, level, sort_by)
@@ -309,7 +287,9 @@ class DataManager:
 
 data = DataManager()
 
-# --- CSS & Layout ---
+# ----------------------------------------------------------------------
+# CSS Styling (unchanged)
+# ----------------------------------------------------------------------
 st.markdown("""
     <style>
     .main-header { font-size: 3.15rem; color: #4C51BF; font-weight: bold}
@@ -355,21 +335,20 @@ st.markdown("""
         color: #000000 !important;
         font-size: 1rem;
         line-height: 1.5;
-        max-height: 4.5em; /* Exactly 3 lines */
+        max-height: 4.5em;
         display: -webkit-box;
         -webkit-line-clamp: 3;
         -webkit-box-orient: vertical;
         overflow: hidden;
         text-overflow: ellipsis;
         margin-bottom: 8px;
-        word-break: break-all; /* FORCES wrapping for strings without spaces */
+        word-break: break-all;
         overflow-wrap: break-word;
     }
 
-    /* Light Gray Background for Buttons as requested */
     div[data-testid="stButton"] button, div[data-testid="stLinkButton"] a {
         background-color: #e5e7eb !important;
-        color: #000000 !important; /* Black text on light gray */
+        color: #000000 !important;
         border: 1px solid #d1d5db !important;
         border-radius: 8px !important;
         width: 100% !important;
@@ -382,17 +361,14 @@ st.markdown("""
         background-color: #d1d5db !important;
     }
 
-    /* Double font size for Tabs, Expanders, and Labels */
     button[data-testid="stTab"] p { font-size: 1.5rem !important; }
     div[data-testid="stExpander"] p { font-size: 1.5rem !important; }
     label[data-testid="stWidgetLabel"] p { font-size: 1.5rem !important; }
     
-    /* Input fields themselves */
     div[data-testid="stForm"] input, div[data-testid="stForm"] textarea, div[data-testid="stForm"] div[role="combobox"] {
         font-size: 1.2rem !important;
     }
 
-    /* Leaderboard font scaling */
     .leaderboard-row {
         font-size: 1.5rem !important;
     }
@@ -402,66 +378,68 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# ----------------------------------------------------------------------
+# DYNAMIC BASE URL DETECTION (fixes Google OAuth redirect)
+# ----------------------------------------------------------------------
+def get_base_url():
+    """
+    Returns the base URL of the current Streamlit app.
+    Works both locally and on Streamlit Cloud.
+    """
+    try:
+        headers = st.context.headers
+        host = headers.get("host", "localhost:8501")
+        # Protocol: use X-Forwarded-Proto if behind a proxy, else default to https
+        proto = headers.get("x-forwarded-proto", "https").split(",")[0].strip()
+        return f"{proto}://{host}"
+    except:
+        # Fallback for older Streamlit versions or local testing
+        return "http://localhost:8501"
 
-# --- Authentication Logic ---
+# ----------------------------------------------------------------------
+# Authentication state
+# ----------------------------------------------------------------------
 if 'user' not in st.session_state:
     st.session_state.user = None
 
-
-# --- OAuth Callback Handling ---
-# Check for 'code' in query params (Supabase generic generic redirect)
+# ----------------------------------------------------------------------
+# GOOGLE OAUTH CALLBACK HANDLER (with improved error handling)
+# ----------------------------------------------------------------------
 params = st.query_params
 if "code" in params:
     try:
-        # Exchange code for session
+        # Exchange the OAuth code for a session
         session = supabase.auth.exchange_code_for_session(params["code"])
         if session and session.user and session.user.email:
-            # Sync with public.users
             app_user = data.sync_google_user(session.user.email)
             if app_user:
                 st.session_state.user = app_user
                 st.session_state.user_likes = data.get_user_likes()
                 st.success(f"Signed in as {app_user['username']} via Google!")
-                # Clear params and reload
                 st.query_params.clear()
-                time.sleep(1)
                 st.rerun()
             else:
-                st.error("Failed to sync user profile.")
+                st.error("Google login succeeded but user profile could not be created.")
+        else:
+            st.error("Google login succeeded but no user session was returned.")
     except Exception as e:
-        st.error(f"Google Sign-In Error: {e}")
+        st.error(f"Google callback error: {e}")
+        st.exception(e)  # Show full traceback for debugging
     finally:
-        # Always try to clear params to prevent loops or stale codes
+        # Always clear the code to prevent reprocessing on refresh
         if "code" in st.query_params:
-             st.query_params.clear()
+            st.query_params.clear()
 
+# ----------------------------------------------------------------------
+# LOGIN PAGE (if not authenticated)
+# ----------------------------------------------------------------------
 if st.session_state.user is None:
     st.markdown('<div class="main-header" style="text-align: center;">🏫 SST Study Sphere</div>', unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center;'>Please Sign In to Continue</h3>", unsafe_allow_html=True)
-    
-    # Google Sign-In Button
+
+    # ---------- Google Sign-In Button ----------
     try:
-        # Get the OAuth URL
-        # We redirect back to the app root. 
-        # Streamlit cloud: https://<app>.streamlit.app
-        # Localhost: http://localhost:8501
-        # We can try referencing st.secrets or just let Supabase handle the site_url if configured.
-        # But best to be explicit if running locally vs cloud.
-        # For now, we'll assume the Supabase "Site URL" or "Redirect URL" is set to this app.
-        
-        # We need to construct the absolute redirect URL for Supabase
-        # Since we don't know the exact deployed URL dynamicallly easily without config,
-        # we will rely on what is set in Supabase dashboard (Redirect URLs).
-        # Environment selection for Redirect URL
-        # Because we can't easily detect if running locally or on cloud in all contexts,
-        # we let the use choose, defaulting to Production if they are not sure.
-        env_mode = st.radio("Login Environment", ["Production (sstudy.streamlit.app)", "Local (localhost:8501)"], horizontal=True, label_visibility="collapsed")
-        
-        if "Production" in env_mode:
-            redirect_url = "https://sstudy.streamlit.app/"
-        else:
-            redirect_url = "http://localhost:8501"
-        
+        redirect_url = get_base_url()  # Automatically detects correct URL
         auth_response = supabase.auth.sign_in_with_oauth({
             "provider": "google",
             "options": {
@@ -469,12 +447,15 @@ if st.session_state.user is None:
             }
         })
         if auth_response.url:
-             st.link_button(f"🔵 Sign in with Google ({'Prod' if 'Production' in env_mode else 'Local'})", auth_response.url, use_container_width=True)
+            st.link_button("🔵 Sign in with Google", auth_response.url, use_container_width=True)
+        else:
+            st.error("Failed to start Google sign‑in – no authorization URL returned.")
     except Exception as e:
-        st.error(f"Could not load Google Sign-In: {e}")
+        st.error(f"Could not load Google Sign‑In: {e}")
 
+    # ---------- Email/Password Tabs ----------
     tab_login, tab_signup = st.tabs(["Sign In", "Sign Up"])
-    
+
     with tab_login:
         with st.form("login_form"):
             email = st.text_input("Email")
@@ -518,20 +499,19 @@ if st.session_state.user is None:
                         st.error(res)
 
 else:
-    # --- Main App (Logged In) ---
-    
-    # Always refresh user data on load to ensure XP is up to date
+    # ------------------------------------------------------------------
+    # MAIN APP (Logged In)
+    # ------------------------------------------------------------------
     data.refresh_user()
-    
+
     with st.container():
         c1, c2, c3 = st.columns([3, 1, 0.5])
         c1.markdown('<div class="main-header">🏫 SST Study Sphere</div>', unsafe_allow_html=True)
-        
-        # Calculate Level
+
         xp = st.session_state.user['xp']
         level = calculate_level(xp)
         next_level_xp = calculate_next_level_xp(level)
-        
+
         c2.markdown(f"<div style='font-size: 120%;'>Welcome, {st.session_state.user['username']} | <b>Level {level}</b> ({xp}/{next_level_xp} XP)</div>", unsafe_allow_html=True)
         if c3.button("Logout"):
             st.session_state.user = None
@@ -540,40 +520,38 @@ else:
 
     tab1, tab2, tab3 = st.tabs(["📚 Notes Forum", "🏆 Leaderboard", "🤖 AI Tutor"])
 
-    # --- Notes Tab ---
+    # ---------- Notes Forum ----------
     with tab1:
         with st.expander("⬆️ Upload New Note"):
             with st.form("upload_form", clear_on_submit=True):
                 u_title = st.text_input("Title")
                 u_file = st.file_uploader("Upload PDF/Video", type=['pdf', 'mp4', 'png', 'jpg'])
-                
+
                 c_a, c_b = st.columns(2)
                 u_subject = c_a.selectbox("Subject", ['English', 'Chinese', 'Malay', 'Tamil', 'Math', 'Physics', 'Chemistry', 'Biology', 'Computing', 'Biotechnology', 'Design Studies', 'Electronics', 'Geography', 'History', 'Social Studies', 'CCE', 'Changemakers'])
                 u_level = c_b.selectbox("Level", ['Sec 1', 'Sec 2', 'Sec 3', 'Sec 4'])
-                
+
                 u_desc = st.text_area("Description")
-                
+
                 if st.form_submit_button("Post Note (+15 XP)"):
                     if u_title and u_desc:
                         with st.spinner("Publishing..."):
                             success = data.add_note(u_title, u_subject, u_level, u_desc, u_file)
                         if success:
                             st.success("Note Published! You gained 15 XP.")
-                            time.sleep(1) # Let them read it
+                            time.sleep(1)
                             st.rerun()
                     else:
                         st.warning("Please enter a title and description.")
 
-        # Search & Filter
         col_search, col_sub, col_lvl, col_sort = st.columns([3, 1, 1, 1])
         search_query = col_search.text_input("Search", placeholder="Search notes...")
         subject_filter = col_sub.selectbox("Subject Filter", ['All', 'English', 'Chinese', 'Malay', 'Tamil', 'Math', 'Physics', 'Chemistry', 'Biology', 'Computing', 'Biotechnology', 'Design Studies', 'Electronics', 'Geography', 'History', 'Social Studies', 'CCE', 'Changemakers'])
         level_filter = col_lvl.selectbox("Level Filter", ['All', 'Sec 1', 'Sec 2', 'Sec 3', 'Sec 4'])
         sort_option = col_sort.selectbox("Sort By", ["Recent", "Most Likes"])
 
-        # Grid - Using unified containers for stability
         notes = data.get_projects(search_query, subject_filter, level_filter, sort_option)
-        
+
         if not notes:
             st.info("No notes found.")
         else:
@@ -584,7 +562,6 @@ else:
                     with cols[j]:
                         if j < len(row_notes):
                             note = row_notes[j]
-                            # Use a standard container and our custom .note-card class
                             st.markdown(f"""
                                 <div class="note-card">
                                     <h4>{note['title']}</h4>
@@ -593,45 +570,44 @@ else:
                                     <div class="note-description">{note['description'] or "No description provided."}</div>
                                     <div style="margin-top: 0px;">
                             """, unsafe_allow_html=True)
-                            
-                            # Buttons inside the auto-pushed bottom area
+
                             if note['file'] and note['file'] != "#":
                                 f_name = note.get('file_name') or "File"
-                                # Append ?download= to force browser download instead of opening in tab
                                 download_url = f"{note['file']}?download="
                                 st.link_button(f"⬇️ Download {f_name}", download_url, use_container_width=True)
+
                             has_liked = note['id'] in st.session_state.user_likes
                             btn_text = f"❤️ {note['likes']} Like" if not has_liked else f"💖 {note['likes']} Liked"
-                            
+
                             if st.button(btn_text, key=f"like_btn_{note['id']}", disabled=has_liked, use_container_width=True):
                                 if data.like_note(note['id'], note['likes'], note['author']):
                                     st.rerun()
-                            
+
                             st.markdown('</div></div>', unsafe_allow_html=True)
                         else:
                             st.empty()
 
-    # --- Leaderboard Tab ---
+    # ---------- Leaderboard ----------
     with tab2:
         st.header("Leaderboard 🏆")
         leaderboard = data.get_leaderboard()
-        
+
         for idx, user_row in enumerate(leaderboard):
             rank = idx + 1
-            icon = "🥇" if rank==1 else "🥈" if rank==2 else "🥉" if rank==3 else f"#{rank}"
-            
+            icon = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉" if rank == 3 else f"#{rank}"
+
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([1, 4, 1.5, 1.5])
                 c1.markdown(f'<div class="leaderboard-rank">{icon}</div>', unsafe_allow_html=True)
                 c2.markdown(f'<div class="leaderboard-row"><b>{user_row["username"]}</b></div>', unsafe_allow_html=True)
-                
+
                 u_xp = user_row["xp"]
                 u_lvl = calculate_level(u_xp)
-                
+
                 c3.markdown(f'<div class="leaderboard-row">Lvl {u_lvl}</div>', unsafe_allow_html=True)
                 c4.markdown(f'<div class="leaderboard-row">{u_xp} XP</div>', unsafe_allow_html=True)
 
-    # --- AI Tutor Tab ---
+    # ---------- AI Tutor (placeholder) ----------
     with tab3:
         st.header("AI Study Buddy 🤖")
         st.write("Coming soon...")
