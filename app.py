@@ -4,7 +4,7 @@ import mimetypes
 import math
 import hashlib
 import time
-from supabase_auth_ui import AuthUI
+
 
 # ----------------------------------------------------------------------
 # Helper functions (unchanged)
@@ -443,13 +443,21 @@ if st.session_state.user is None:
     st.markdown('<div class="main-header" style="text-align: center;">🏫 SST Study Sphere</div>', unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center;'>Please Sign In to Continue</h3>", unsafe_allow_html=True)
 
-    # Display the Supabase Auth UI widget
-    auth_ui = AuthUI(
-        supabase=supabase,
-        redirect_url=get_base_url(),  # your existing function
-        providers=["google"]
-    )
-    auth_ui.login()
+    # ---------- Google Sign-In Button ----------
+    try:
+        redirect_url = get_base_url()  # Automatically detects correct URL
+        auth_response = supabase.auth.sign_in_with_oauth({
+            "provider": "google",
+            "options": {
+                "redirect_to": redirect_url
+            }
+        })
+        if auth_response.url:
+            st.link_button("🔵 Sign in with Google", auth_response.url, use_container_width=True)
+        else:
+            st.error("Failed to start Google sign‑in – no authorization URL returned.")
+    except Exception as e:
+        st.error(f"Could not load Google Sign‑In: {e}")
 
     # ---------- Email/Password Tabs ----------
     tab_login, tab_signup = st.tabs(["Sign In", "Sign Up"])

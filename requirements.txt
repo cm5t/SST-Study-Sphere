@@ -1,3 +1,2 @@
 streamlit
 supabase
-supabase-auth-ui
