@@ -34,10 +34,14 @@ st.set_page_config(page_title="SST Study Sphere", page_icon="🏫", layout="wide
 # ----------------------------------------------------------------------
 class StreamlitSessionStorage:
     def get_item(self, key: str) -> str:
-        return st.session_state.get(f"sb_{key}")
+        val = st.session_state.get(f"sb_{key}")
+        # print(f"DEBUG STORAGE: GET {key} -> {val[:10] if val else 'None'}...")
+        return val
     def set_item(self, key: str, value: str) -> None:
+        # print(f"DEBUG STORAGE: SET {key} -> {value[:10]}...")
         st.session_state[f"sb_{key}"] = value
     def remove_item(self, key: str) -> None:
+        # print(f"DEBUG STORAGE: REMOVE {key}")
         if f"sb_{key}" in st.session_state:
             del st.session_state[f"sb_{key}"]
 
@@ -427,8 +431,20 @@ if 'user' not in st.session_state:
 params = st.query_params
 if "code" in params:
     try:
+        # Robustly find code_verifier in session_state (Persisted by StreamlitSessionStorage)
+        code_verifier = None
+        for key in st.session_state.keys():
+            if key.endswith("-code-verifier"):
+                code_verifier = st.session_state[key]
+                break
+
         # Exchange the OAuth code for a session
-        session = supabase.auth.exchange_code_for_session({"auth_code": params["code"]})
+        # We explicitly pass the code_verifier if found to ensure PKCE succeeds
+        exchange_params = {"auth_code": params["code"]}
+        if code_verifier:
+            exchange_params["code_verifier"] = code_verifier
+            
+        session = supabase.auth.exchange_code_for_session(exchange_params)
         if session and session.user and session.user.email:
             app_user = data.sync_google_user(session.user.email)
             if app_user:
