@@ -38,8 +38,9 @@ class StreamlitSessionStorage:
         val = st.session_state.get(f"sb_{key}") or st.session_state.get(key)
         return val
     def set_item(self, key: str, value: str) -> None:
+        # Store in both places to ensure it's found regardless of prefixing
         st.session_state[f"sb_{key}"] = value
-        st.session_state[key] = value # redundant but safe
+        st.session_state[key] = value
     def remove_item(self, key: str) -> None:
         st.session_state.pop(f"sb_{key}", None)
         st.session_state.pop(key, None)
@@ -446,7 +447,7 @@ if "code" in params:
         debug_info = {
             "has_code": bool(auth_code),
             "has_verifier": bool(code_verifier),
-            "session_keys": [k for k in st.session_state.keys() if "sb_" in k or "verifier" in k]
+            "all_session_keys": list(st.session_state.keys())
         }
 
         # 4. Exchange the OAuth code for a session
@@ -494,9 +495,9 @@ if st.session_state.user is None:
     st.markdown('<div class="main-header" style="text-align: center;">🏫 SST Study Sphere</div>', unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center;'>Please Sign In to Continue</h3>", unsafe_allow_html=True)
 
-    # ---------- Google Sign-In Button ----------
+    # ---------- Google Sign-In Button (Custom HTML to force same tab) ----------
     try:
-        redirect_url = get_base_url()  # Automatically detects correct URL
+        redirect_url = get_base_url()
         auth_response = supabase.auth.sign_in_with_oauth({
             "provider": "google",
             "options": {
@@ -504,7 +505,21 @@ if st.session_state.user is None:
             }
         })
         if auth_response.url:
-            st.link_button("🔵 Sign in with Google", auth_response.url, use_container_width=True)
+            # We use custom HTML because st.link_button defaults to target="_blank"
+            st.markdown(f"""
+                <a href="{auth_response.url}" target="_self" style="
+                    display: block;
+                    width: 100%;
+                    background-color: #4285F4;
+                    color: white;
+                    text-align: center;
+                    padding: 10px;
+                    text-decoration: none;
+                    border-radius: 8px;
+                    font-weight: 600;
+                    margin-bottom: 20px;
+                ">🔵 Sign in with Google</a>
+            """, unsafe_allow_html=True)
         else:
             st.error("Failed to start Google sign‑in – no authorization URL returned.")
     except Exception as e:
