@@ -34,16 +34,15 @@ st.set_page_config(page_title="SST Study Sphere", page_icon="🏫", layout="wide
 # ----------------------------------------------------------------------
 class StreamlitSessionStorage:
     def get_item(self, key: str) -> str:
-        val = st.session_state.get(f"sb_{key}")
-        # print(f"DEBUG STORAGE: GET {key} -> {val[:10] if val else 'None'}...")
+        # Check both with and without prefix for compatibility
+        val = st.session_state.get(f"sb_{key}") or st.session_state.get(key)
         return val
     def set_item(self, key: str, value: str) -> None:
-        # print(f"DEBUG STORAGE: SET {key} -> {value[:10]}...")
         st.session_state[f"sb_{key}"] = value
+        st.session_state[key] = value # redundant but safe
     def remove_item(self, key: str) -> None:
-        # print(f"DEBUG STORAGE: REMOVE {key}")
-        if f"sb_{key}" in st.session_state:
-            del st.session_state[f"sb_{key}"]
+        st.session_state.pop(f"sb_{key}", None)
+        st.session_state.pop(key, None)
 
 # ----------------------------------------------------------------------
 # Supabase client – stored in session_state to survive OAuth redirect
@@ -431,20 +430,41 @@ if 'user' not in st.session_state:
 params = st.query_params
 if "code" in params:
     try:
-        # Robustly find code_verifier in session_state (Persisted by StreamlitSessionStorage)
+        # 1. Get code from URL (ensure it's a string)
+        auth_code = params.get("code")
+        if isinstance(auth_code, list): auth_code = auth_code[0]
+        
+        # 2. Find verifier in session state
         code_verifier = None
+        # Look for any key that looks like a verifier
         for key in st.session_state.keys():
-            if key.endswith("-code-verifier"):
+            if "code-verifier" in key or "code_verifier" in key:
                 code_verifier = st.session_state[key]
                 break
+        
+        # 3. DEBUG (Visible if error occurs)
+        debug_info = {
+            "has_code": bool(auth_code),
+            "has_verifier": bool(code_verifier),
+            "session_keys": [k for k in st.session_state.keys() if "sb_" in k or "verifier" in k]
+        }
 
-        # Exchange the OAuth code for a session
-        # We explicitly pass the code_verifier if found to ensure PKCE succeeds
-        exchange_params = {"auth_code": params["code"]}
-        if code_verifier:
-            exchange_params["code_verifier"] = code_verifier
-            
-        session = supabase.auth.exchange_code_for_session(exchange_params)
+        # 4. Exchange the OAuth code for a session
+        # We try to pass both auth_code and code_verifier explicitly
+        # Some library versions expect a dict, some positional. We'll use a dict.
+        exchange_params = {
+            "auth_code": auth_code,
+            "code_verifier": code_verifier
+        }
+        
+        # If no verifier found, try passing just the code string as fallback
+        if not code_verifier:
+            try:
+                session = supabase.auth.exchange_code_for_session(auth_code)
+            except:
+                session = supabase.auth.exchange_code_for_session(exchange_params)
+        else:
+            session = supabase.auth.exchange_code_for_session(exchange_params)
         if session and session.user and session.user.email:
             app_user = data.sync_google_user(session.user.email)
             if app_user:
@@ -459,6 +479,8 @@ if "code" in params:
             st.error("Google login succeeded but no user session was returned.")
     except Exception as e:
         st.error(f"Google callback error: {e}")
+        if 'debug_info' in locals():
+            st.write("Debug Info:", debug_info)
         st.exception(e)  # Show full traceback for debugging
     finally:
         # Always clear the code to prevent reprocessing on refresh
