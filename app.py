@@ -429,6 +429,15 @@ if 'user' not in st.session_state:
 # GOOGLE OAUTH CALLBACK HANDLER (with improved error handling)
 # ----------------------------------------------------------------------
 params = st.query_params
+
+# Check for explicit OAuth errors from Google
+if "error" in params:
+    error_code = params.get("error")
+    error_msg = params.get("error_description", "No description provided.")
+    st.error(f"Google OAuth Error: {error_code}")
+    st.info(f"Details: {error_msg}")
+    st.query_params.clear()
+
 if "code" in params:
     try:
         # 1. Get code from URL (ensure it's a string)
@@ -489,6 +498,9 @@ if st.session_state.user is None:
     # ---------- Google Sign-In Button (Custom HTML to force same tab) ----------
     try:
         redirect_url = get_base_url()
+        # DEBUG: Show the exact redirect URL being used
+        st.caption(f"Debug: Redirecting detailed internal to: `{redirect_url}`")
+        
         auth_response = supabase.auth.sign_in_with_oauth({
             "provider": "google",
             "options": {
