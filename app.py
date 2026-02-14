@@ -443,14 +443,7 @@ if "code" in params:
                 code_verifier = st.session_state[key]
                 break
         
-        # 3. DEBUG (Visible if error occurs)
-        debug_info = {
-            "has_code": bool(auth_code),
-            "has_verifier": bool(code_verifier),
-            "all_session_keys": list(st.session_state.keys())
-        }
-
-        # 4. Exchange the OAuth code for a session
+        # 3. Exchange the OAuth code for a session
         # We try to pass both auth_code and code_verifier explicitly
         # Some library versions expect a dict, some positional. We'll use a dict.
         exchange_params = {
@@ -480,8 +473,6 @@ if "code" in params:
             st.error("Google login succeeded but no user session was returned.")
     except Exception as e:
         st.error(f"Google callback error: {e}")
-        if 'debug_info' in locals():
-            st.write("Debug Info:", debug_info)
         st.exception(e)  # Show full traceback for debugging
     finally:
         # Always clear the code to prevent reprocessing on refresh
@@ -524,14 +515,6 @@ if st.session_state.user is None:
             st.error("Failed to start Google sign‑in – no authorization URL returned.")
     except Exception as e:
         st.error(f"Could not load Google Sign‑In: {e}")
-
-    # ---------- OAuth Troubleshooting Diagnostics ----------
-    with st.expander("🛠️ OAuth Troubleshooter"):
-        st.write("Cross-check these values with your dashboards:")
-        st.code(f"App Redirect URL: {get_base_url()}")
-        st.write("1. **Google Cloud**: The 'Authorized redirect URI' must be the **Supabase** callback URL (found in Supabase > Authentication > Providers > Google).")
-        st.write("2. **Supabase**: The 'Redirect URL' in Supabase URL Configuration must be the **App Redirect URL** shown above.")
-        st.write("3. **Google Cloud**: Ensure 'User Type' is set to **External** on the OAuth consent screen.")
 
     # ---------- Email/Password Tabs ----------
     tab_login, tab_signup = st.tabs(["Sign In", "Sign Up"])
